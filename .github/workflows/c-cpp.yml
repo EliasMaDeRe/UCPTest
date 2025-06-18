@@ -16,5 +16,5 @@ jobs:
     - uses: actions/checkout@v4
     - name: build
       run: g++ -o output main.cpp
-    - name: build
-      run: ./output
+    - name: run
+      run: ./output > output.txt
