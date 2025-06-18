@@ -18,3 +18,5 @@ jobs:
       run: g++ -o output main.cpp
     - name: run
       run: ./output > output.txt
+    - name: print
+      run: cat output.txt
