@@ -1,0 +1,14 @@
+name: "Correctness test Action"
+description: "Perform correctness test : Give a correct or not answer given Homework 0 instructions"
+inputs:
+  GITHUB_TOKEN:
+    description: "Github token to interact with the repository"
+    required: true
+  GEMINI_API_KEY:
+    description: "Gemini API key"
+  exclude:
+    description: "Glob patterns to exclude files from the diff analysis"
+    required: false
+    default: ""
+runs:
+  using: ""
