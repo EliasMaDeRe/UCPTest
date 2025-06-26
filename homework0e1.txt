@@ -1,0 +1,19 @@
+Question 1: ZeroSum
+Given an array of integers, return the number of pairs of integers in the array that sum to 0 assuming you can use the element at each index at most once.
+
+Examples:
+Input Array: [1, 10, 8, 3, 2, 5, 7, 2, -2, -1]
+Output: 2
+(Pairs: (1, -1), (2,-2))
+
+Input Array: [1, 10, 8, -2, 2, 5, 7, 2, -2, -1]
+Output: 3
+(Pairs: (1, -1), (2,-2), (2,-2))
+
+Input Array: [4, 3, 3, 5, 7, 0, 2, 3, 8, 6]
+Output: 0
+
+Input Array: [4, 3, 3, 5, 7, 0, 2, 3, 8, 0]
+Output: 1
+(Pairs: (0, 0))
+
