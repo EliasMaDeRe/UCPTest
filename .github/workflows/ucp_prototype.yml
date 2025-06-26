@@ -12,6 +12,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Dump GitHub Event Payload for Debugging
+        run: |
+          echo "--- GITHUB EVENT PATH CONTENT ---"
+          cat ${{ github.event_path }}
+          echo "--- END GITHUB EVENT PATH CONTENT ---"
+          echo ""
+          echo "--- GITHUB EVENT JSON (for easy parsing) ---"
+          echo "${{ toJson(github.event) }}"
+          echo "--- END GITHUB EVENT JSON ---"
       - name: Set up script
         uses: actions/setup-go@v5
         with:
