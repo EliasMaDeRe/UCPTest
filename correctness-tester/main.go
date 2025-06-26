@@ -204,7 +204,7 @@ func main() {
 	}
 	defer clientGenAI.Close()
 
-	model := clientGenAI.GenerativeModel("gemini-pro") // Or gemini-1.5-flash for faster responses
+	model := clientGenAI.GenerativeModel("gemini-2.0-flash") 
 	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
 	if err != nil {
 		log.Fatalf("Error generating content from Gemini: %v", err)
