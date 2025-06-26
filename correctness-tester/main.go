@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
@@ -15,7 +14,7 @@ import (
 )
 
 const (
-	homeworkInstructionsFile = "homework0.txt"
+	homeworkInstructionsFile = "homework0e3.txt"
 	geminiPromptTemplate = `You are an AI assistant specialized in evaluating code against homework instructions.
 Your task is to analyze the provided code snippets (which may be in various programming languages) and determine if they correctly implement the requirements described in the homework instructions.
 Focus on correctness, completeness, and adherence to the problem statement. Do not focus on style unless explicitly mentioned in the instructions.

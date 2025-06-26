@@ -1,0 +1,12 @@
+Question 3: FirstOccurrence 
+Given a string, return a string that contains only the first occurrence of each character in the string.
+
+Examples:
+Input String: "abracadabra"
+Output: "abrcd"
+
+Input String: "Uber Career Prep"
+Output: "Uber CaPp"
+
+Input String: "zzyzx"
+Output: "zyx"
