@@ -16,6 +16,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache-dependency-path: correctness-tester/go.sum
       - name: Correctness test
         id: grader
         working-directory: correctness-tester
