@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
@@ -14,8 +16,8 @@ import (
 )
 
 const (
-	homeworkInstructionsFile = "homework0e3.txt"
-	geminiPromptTemplate = `You are an AI assistant specialized in evaluating code against homework instructions.
+	homeworkInstructionsFile = "homework0e3.txt" 
+	geminiPromptTemplate     = `You are an AI assistant specialized in evaluating code against homework instructions.
 Your task is to analyze the provided code snippets (which may be in various programming languages) and determine if they correctly implement the requirements described in the homework instructions.
 Focus on correctness, completeness, and adherence to the problem statement. Do not focus on style unless explicitly mentioned in the instructions.
 
@@ -37,6 +39,15 @@ Be specific and actionable in your feedback, referencing specific parts of the c
 )
 
 type GitHubPushEvent struct {
+	HeadCommit struct {
+		ID string `json:"id"`
+	} `json:"head_commit"`
+	Repository struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	} `json:"repository"`
 	Commits []struct {
 		Added    []string `json:"added"`
 		Modified []string `json:"modified"`
@@ -44,9 +55,15 @@ type GitHubPushEvent struct {
 	} `json:"commits"`
 }
 
-func main() {
+type GitHubCommitDetails struct {
+	Files []struct {
+		Filename string `json:"filename"`
+		Status   string `json:"status"`
+	} `json:"files"`
+}
 
-	// 1. Get changed files from the GITHUB_EVENT_PATH payload
+func main() {
+	// 1. Read the GITHUB_EVENT_PATH payload
 	githubEventPath := os.Getenv("GITHUB_EVENT_PATH")
 	if githubEventPath == "" {
 		log.Fatalf("GITHUB_EVENT_PATH environment variable not set. This script should run in a GitHub Actions workflow.")
@@ -62,44 +79,108 @@ func main() {
 		log.Fatalf("Failed to unmarshal GitHub push event payload: %v", err)
 	}
 
-	var changedFiles []string
-	for _, commit := range pushEvent.Commits {
-		changedFiles = append(changedFiles, commit.Added...)
-		changedFiles = append(changedFiles, commit.Modified...)
+	// --- START: Fetch file changes via GitHub API ---
+	headCommitSHA := pushEvent.HeadCommit.ID
+	repoOwner := pushEvent.Repository.Owner.Login
+	repoName := pushEvent.Repository.Name
+
+	if headCommitSHA == "" || repoOwner == "" || repoName == "" {
+		log.Fatalf("Could not extract necessary information (commit SHA, repo owner, or repo name) from GITHUB_EVENT_PATH for GitHub API call.")
 	}
 
+	fmt.Printf("Fetching commit details for %s/%s@%s via GitHub API...\n", repoOwner, repoName, headCommitSHA)
+
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" {
+		log.Fatalf("GITHUB_TOKEN environment variable not set. It is required for GitHub API calls. Ensure your workflow has 'permissions: contents: read'.")
+	}
+
+	httpClient := &http.Client{}
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", repoOwner, repoName, headCommitSHA), nil)
+	if err != nil {
+		log.Fatalf("Error creating GitHub API request: %v", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Authorization", "token "+githubToken)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28") 
+
+	respAPI, err := httpClient.Do(req)
+	if err != nil {
+		log.Fatalf("Error making GitHub API request: %v", err)
+	}
+	defer respAPI.Body.Close()
+
+	if respAPI.StatusCode != http.StatusOK {
+		bodyBytes, _ := ioutil.ReadAll(respAPI.Body)
+		log.Fatalf("GitHub API request failed with status %d for commit %s: %s", respAPI.StatusCode, headCommitSHA, string(bodyBytes))
+	}
+
+	var commitDetails GitHubCommitDetails
+	apiResponseBody, err := ioutil.ReadAll(respAPI.Body)
+	if err != nil {
+		log.Fatalf("Error reading GitHub API response body: %v", err)
+	}
+	if err := json.Unmarshal(apiResponseBody, &commitDetails); err != nil {
+		log.Fatalf("Error unmarshaling GitHub API response: %v", err)
+	}
+
+	var changedFilesRepoRelative []string 
+	for _, file := range commitDetails.Files {
+		// Only consider "added" or "modified" files for grading
+		if file.Status == "added" || file.Status == "modified" {
+			changedFilesRepoRelative = append(changedFilesRepoRelative, file.Filename)
+		}
+	}
+	// --- END: Fetch file changes via GitHub API ---
+
+	repoRootPrefix := ".." + string(filepath.Separator)
+
 	filteredFiles := []string{}
-	for _, file := range changedFiles {
-		if strings.HasPrefix(file, "correctness-tester/") || strings.HasPrefix(file, ".github/workflows/") {
-			log.Printf("Skipping internal file: %s", file)
+	for _, fileRepoRelative := range changedFilesRepoRelative {
+		// Skip internal grader files (paths will be like 'correctness-tester/main.go' from API)
+		// We use strings.HasPrefix for folder names, and exact match for files like homework.txt
+		if strings.HasPrefix(fileRepoRelative, "correctness-tester/") ||
+			strings.HasPrefix(fileRepoRelative, ".github/workflows/") ||
+			fileRepoRelative == homeworkInstructionsFile {
+			log.Printf("Skipping internal/config file: %s", fileRepoRelative)
 			continue
 		}
-		filteredFiles = append(filteredFiles, file)
+
+		pathForReading := fileRepoRelative
+		if !strings.HasPrefix(fileRepoRelative, "correctness-tester/") {
+			pathForReading = filepath.Join(repoRootPrefix, fileRepoRelative)
+		}
+
+		filteredFiles = append(filteredFiles, pathForReading)
 	}
 
 	if len(filteredFiles) == 0 {
-		fmt.Println("No relevant code files changed in this push. Skipping evaluation.")
+		fmt.Println("No relevant code files found for evaluation after filtering. Skipping evaluation.")
 		os.Exit(0)
 	}
 
 	// 2. Read Homework Instructions
-	homeworkInstructions, err := ioutil.ReadFile(homeworkInstructionsFile)
+	// Homework instructions file is at the repo root, so its path needs to be adjusted relative to the script's CWD
+	actualHomeworkInstructionsFile := filepath.Join(repoRootPrefix, homeworkInstructionsFile)
+	homeworkInstructions, err := ioutil.ReadFile(actualHomeworkInstructionsFile)
 	if err != nil {
-		log.Fatalf("Error reading homework instructions file '%s': %v", homeworkInstructionsFile, err)
+		log.Fatalf("Error reading homework instructions file '%s': %v", actualHomeworkInstructionsFile, err)
 	}
 
 	// 3. Read Changed Code Files
 	var allCodeContent strings.Builder
-	for _, file := range filteredFiles {
-		code, err := ioutil.ReadFile(file)
+	for _, fileAdjustedPath := range filteredFiles {
+		code, err := ioutil.ReadFile(fileAdjustedPath)
 		if err != nil {
-			log.Printf("Warning: Could not read file '%s': %v", file, err)
+			log.Printf("Warning: Could not read file '%s': %v", fileAdjustedPath, err)
 			continue
 		}
-		// Add a header to clearly separate files for Gemini
-		allCodeContent.WriteString(fmt.Sprintf("--- File: %s ---\n", file))
+		// The header should use the original repo-relative path for Gemini's context
+		// We need to strip the '..' prefix if it was added for display.
+		displayFileName := strings.TrimPrefix(fileAdjustedPath, repoRootPrefix)
+		allCodeContent.WriteString(fmt.Sprintf("--- File: %s ---\n", displayFileName))
 		allCodeContent.Write(code)
-		allCodeContent.WriteString("\n\n") // Add extra newlines for separation
+		allCodeContent.WriteString("\n\n")
 	}
 
 	if allCodeContent.Len() == 0 {
@@ -117,13 +198,13 @@ func main() {
 	}
 
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	clientGenAI, err := genai.NewClient(ctx, option.WithAPIKey(apiKey)) // Renamed client to avoid http.Client name conflict
 	if err != nil {
 		log.Fatalf("Error creating Gemini client: %v", err)
 	}
-	defer client.Close()
+	defer clientGenAI.Close()
 
-	model := client.GenerativeModel("gemini-pro") // Consider gemini-1.5-flash for potentially faster/cheaper responses
+	model := clientGenAI.GenerativeModel("gemini-pro") // Or gemini-1.5-flash for faster responses
 	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
 	if err != nil {
 		log.Fatalf("Error generating content from Gemini: %v", err)
