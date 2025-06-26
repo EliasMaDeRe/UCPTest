@@ -12,6 +12,7 @@ for(int i = 0; i < input.size(); ++i){
         output.push_back(input[i]);
     }
 }
+cout<<"@test"<<endl;
 cout<<output;
 
 return 0;}
