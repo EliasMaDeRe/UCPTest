@@ -31,6 +31,7 @@ jobs:
         working-directory: correctness-tester
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           go run main.go
       - name: Grade result
