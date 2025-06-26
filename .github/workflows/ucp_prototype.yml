@@ -1,0 +1,18 @@
+name: UCP Prototype
+on: 
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+jobs:
+  correctness-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Correctness test
+        uses: eliasmadere/UCPTest@main
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          exclude: "yarn.lock,dist/**"
