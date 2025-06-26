@@ -18,7 +18,7 @@ jobs:
           go-version: '1.22'
       - name: Correctness test
         id: grader
-        working-directory: correctness-test
+        working-directory: correctness-tester
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
