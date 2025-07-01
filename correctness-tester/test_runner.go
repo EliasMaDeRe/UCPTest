@@ -132,7 +132,15 @@ func main() {
 	jsonPart := resp.Candidates[0].Content.Parts[0].(genai.Text)
 	jsonStr := strings.Trim(string(jsonPart), " \n\t`json")
 	var testCasesResponse TestCasesResponse
-	if err := json.Unmarshal([]byte(jsonStr), &testCasesResponse); err != nil { log.Fatalf("Failed to unmarshal Gemini's JSON response: %v\nRaw response:\n%s", err, jsonStr) }
+	if err := json.Unmarshal([]byte(jsonStr), &testCasesResponse); err != nil {
+		log.Fatalf("::error::Failed to unmarshal Gemini's JSON response for test cases. The model may have returned non-JSON text. Error: %v\nRaw response:\n%s", err, jsonStr)
+	}
+
+	// *** NEW, IMPROVED ERROR HANDLING ***
+	if len(testCasesResponse.TestCases) == 0 {
+		log.Fatalf("::error::Gemini returned 0 test cases. This usually means the homework instructions in '%s' are unclear or empty. Please check the instructions file.\nRaw model response was: %s", homeworkInstructionsFile, jsonStr)
+	}
+	
 	fmt.Printf("Successfully generated %d test cases.\n", len(testCasesResponse.TestCases))
 	
 	// 5. Compile ALL Pushed Source Files Together
@@ -152,7 +160,7 @@ func main() {
 		fmt.Println("Compilation successful.")
 	}
 	
-	// 6. Execute and Test ***(FULL SCRIPT RESTORED)***
+	// 6. Execute and Test
 	var execCmd []string
 	for _, arg := range project.ExecuteCmd {
 		arg = strings.Replace(arg, "__FILE__", project.EntryPointFile, -1)
@@ -166,7 +174,6 @@ func main() {
 		cmdRun := exec.Command(execCmd[0], execCmd[1:]...)
 		cmdRun.Stdin = strings.NewReader(tc.Input)
 		
-		// This is the section that uses the 'bytes' package
 		var stdout, stderr bytes.Buffer
 		cmdRun.Stdout = &stdout
 		cmdRun.Stderr = &stderr
