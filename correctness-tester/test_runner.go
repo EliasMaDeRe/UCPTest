@@ -18,13 +18,11 @@ import (
 	"google.golang.org/api/option"
 )
 
-// --- Structs and Constants from previous versions ---
-// (These are unchanged)
+// --- Structs and Constants ---
 const (
 	homeworkInstructionsFile = "homework0e3.txt"
 	compiledExecutableName   = "student_executable"
 )
-
 type TestCase struct {
 	Description    string `json:"description"`
 	Input          string `json:"input"`
@@ -46,7 +44,6 @@ type GitHubCommitDetails struct {
 }
 
 // --- Language and Prompt Configurations ---
-// (Unchanged)
 var supportedLanguages = map[string]LanguageConfig{
 	"Python": { Language: "Python", GlobPattern: "*.py", ExecuteCmd: []string{"python3", "__FILE__"} },
 	"Java":   { Language: "Java", GlobPattern: "*.java", CompileCmd: []string{"javac", "__FILE__"}, ExecuteCmd: []string{"java", "-cp", "..", "__CLASSNAME__"} },
@@ -59,9 +56,7 @@ Homework Instructions:
 %s
 ---
 `
-
-// --- Helper functions from previous versions ---
-// (Unchanged)
+// --- Helper functions ---
 func askAiForEntryPoint(ctx context.Context, client *genai.GenerativeModel, files []string) (string, error) {
 	fmt.Printf("Multiple potential entry points found: %v. Asking AI for the main file...\n", files)
 	var fileBasenames []string
@@ -87,7 +82,7 @@ func buildCommand(args []string, project *Project) []string {
 
 // --- Main application logic ---
 func main() {
-	// 1. READ PUSH EVENT TO GET CHANGED FILES (Restored Logic)
+	// 1. READ PUSH EVENT TO GET CHANGED FILES
 	fmt.Println("Reading GitHub push event...")
 	githubEventPath := os.Getenv("GITHUB_EVENT_PATH")
 	if githubEventPath == "" { log.Fatalf("GITHUB_EVENT_PATH environment variable not set.") }
@@ -119,7 +114,8 @@ func main() {
 	var relevantFilesChanged []string
 	for _, changedFile := range commitDetails.Files {
 		ext := filepath.Ext(changedFile.Filename)
-		for lang, config := range supportedLanguages {
+		// *** THIS IS THE CORRECTED LINE ***
+		for _, config := range supportedLanguages {
 			if strings.TrimPrefix(ext, ".") == strings.TrimPrefix(config.GlobPattern, "*.") {
 				detectedLangConfig = config
 				relevantFilesChanged = append(relevantFilesChanged, changedFile.Filename)
@@ -135,7 +131,6 @@ func main() {
 
 
 	// 3. FIND THE MAIN ENTRY POINT FOR THE DETECTED LANGUAGE
-	// (This part now runs *after* we know the language from the push)
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" { log.Fatalf("GEMINI_API_KEY environment variable not set.") }
 	ctx := context.Background()
@@ -166,9 +161,7 @@ func main() {
 		EntryPointClassName: strings.TrimSuffix(selectedBaseName, filepath.Ext(selectedBaseName)),
 	}
 
-
 	// 4. GENERATE TEST CASES & RUN THEM
-	// (This logic is now confirmed to be running against the correct, intelligently-detected project entry point)
 	fmt.Println("\nGenerating test cases...")
 	actualHomeworkInstructionsFile := filepath.Join(repoRoot, homeworkInstructionsFile)
 	homeworkInstructions, _ := ioutil.ReadFile(actualHomeworkInstructionsFile)
