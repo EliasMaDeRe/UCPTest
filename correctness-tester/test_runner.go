@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,142 +18,62 @@ import (
 	"google.golang.org/api/option"
 )
 
+// --- Structs and Constants from previous versions ---
+// (These are unchanged)
 const (
 	homeworkInstructionsFile = "homework0e3.txt"
 	compiledExecutableName   = "student_executable"
 )
 
-// TestCase and TestCasesResponse structs remain the same
 type TestCase struct {
 	Description    string `json:"description"`
 	Input          string `json:"input"`
 	ExpectedOutput string `json:"expected_output"`
 }
-
-type TestCasesResponse struct {
-	TestCases []TestCase `json:"test_cases"`
-}
-
-// LanguageConfig is simplified, no more conventional entrypoint needed
+type TestCasesResponse struct{ TestCases []TestCase `json:"test_cases"` }
 type LanguageConfig struct {
-	Language    string
-	GlobPattern string
-	CompileCmd  []string
-	ExecuteCmd  []string
+	Language string; GlobPattern string; CompileCmd []string; ExecuteCmd []string
 }
-
 type Project struct {
-	LanguageConfig
-	EntryPointFile      string
-	EntryPointBaseName  string
-	EntryPointClassName string
+	LanguageConfig; EntryPointFile string; EntryPointBaseName string; EntryPointClassName string
+}
+type GitHubPushEvent struct {
+	HeadCommit struct { ID string `json:"id"` } `json:"head_commit"`
+	Repository struct { Name  string `json:"name"`; Owner struct { Login string `json:"login"` } `json:"owner"` } `json:"repository"`
+}
+type GitHubCommitDetails struct {
+	Files []struct { Filename string `json:"filename"`; Status string `json:"status"` } `json:"files"`
 }
 
+// --- Language and Prompt Configurations ---
+// (Unchanged)
 var supportedLanguages = map[string]LanguageConfig{
-	"Python": {
-		Language:    "Python",
-		GlobPattern: "*.py",
-		ExecuteCmd:  []string{"python3", "__FILE__"},
-	},
-	"Java": {
-		Language:   "Java",
-		GlobPattern: "*.java",
-		CompileCmd: []string{"javac", "__FILE__"},
-		ExecuteCmd: []string{"java", "-cp", "..", "__CLASSNAME__"},
-	},
-	"C++": {
-		Language:   "C++",
-		GlobPattern: "*.cpp",
-		CompileCmd: []string{"g++", "__FILE__", "-o", compiledExecutableName, "-std=c++17"},
-		ExecuteCmd: []string{"./" + compiledExecutableName},
-	},
+	"Python": { Language: "Python", GlobPattern: "*.py", ExecuteCmd: []string{"python3", "__FILE__"} },
+	"Java":   { Language: "Java", GlobPattern: "*.java", CompileCmd: []string{"javac", "__FILE__"}, ExecuteCmd: []string{"java", "-cp", "..", "__CLASSNAME__"} },
+	"C++":    { Language: "C++", GlobPattern: "*.cpp", CompileCmd: []string{"g++", "__FILE__", "-o", compiledExecutableName, "-std=c++17"}, ExecuteCmd: []string{"./" + compiledExecutableName} },
 }
-
-const entryPointPromptTemplate = `You are a code analysis expert. Given the following list of filenames from a student's project, identify the single most likely main entry-point file that should be executed to run the entire program.
-
-Consider common naming conventions (like 'main', 'app', 'run', 'solution') and the presence of a 'main' function if the language requires it.
-
-Respond with ONLY the filename and nothing else.
-
-FILENAMES:
-%s`
-
+const entryPointPromptTemplate = `You are a code analysis expert. Given the following list of filenames from a student's project, identify the single most likely main entry-point file. Respond with ONLY the filename and nothing else. FILENAMES: %s`
 const testGenPromptTemplate = `You are an expert Test Case Generator AI. Based on the provided homework instructions, create 5 diverse and effective test cases. Your response MUST be a single, valid JSON object.
-
 ---
 Homework Instructions:
 %s
 ---
 `
 
-// askAiForEntryPoint uses Gemini to decide the main file when multiple are present.
+// --- Helper functions from previous versions ---
+// (Unchanged)
 func askAiForEntryPoint(ctx context.Context, client *genai.GenerativeModel, files []string) (string, error) {
 	fmt.Printf("Multiple potential entry points found: %v. Asking AI for the main file...\n", files)
-	
 	var fileBasenames []string
-	for _, f := range files {
-		fileBasenames = append(fileBasenames, filepath.Base(f))
-	}
-
+	for _, f := range files { fileBasenames = append(fileBasenames, filepath.Base(f)) }
 	prompt := fmt.Sprintf(entryPointPromptTemplate, strings.Join(fileBasenames, "\n"))
 	resp, err := client.GenerateContent(ctx, genai.Text(prompt))
-	if err != nil {
-		return "", fmt.Errorf("gemini failed to determine entry point: %w", err)
-	}
-
-	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
-		return "", errors.New("gemini returned an empty response when asked for the entry point")
-	}
-
-	aiChoice := string(resp.Candidates[0].Content.Parts[0].(genai.Text))
-	aiChoice = strings.TrimSpace(aiChoice)
-
-	// Verify the AI's choice is one of the original files
-	for _, basename := range fileBasenames {
-		if basename == aiChoice {
-			fmt.Printf("AI selected '%s' as the entry point.\n", aiChoice)
-			return aiChoice, nil
-		}
-	}
-
+	if err != nil { return "", fmt.Errorf("gemini failed to determine entry point: %w", err) }
+	if resp == nil || len(resp.Candidates) == 0 { return "", errors.New("gemini returned an empty response for entry point") }
+	aiChoice := strings.TrimSpace(string(resp.Candidates[0].Content.Parts[0].(genai.Text)))
+	for _, basename := range fileBasenames { if basename == aiChoice { fmt.Printf("AI selected '%s' as the entry point.\n", aiChoice); return aiChoice, nil } }
 	return "", fmt.Errorf("AI chose '%s', which is not in the list of found files: %v", aiChoice, fileBasenames)
 }
-
-func detectProjectLanguage(ctx context.Context, client *genai.GenerativeModel, repoRoot string) (*Project, error) {
-	fmt.Println("Detecting project language and entry point...")
-	for _, config := range supportedLanguages {
-		globPath := filepath.Join(repoRoot, config.GlobPattern)
-		matches, _ := filepath.Glob(globPath)
-
-		if len(matches) == 0 {
-			continue
-		}
-
-		var selectedBaseName string
-		if len(matches) == 1 {
-			selectedBaseName = filepath.Base(matches[0])
-			fmt.Printf("Detected single %s file: using '%s' as the entry point.\n", config.Language, selectedBaseName)
-		} else {
-			// More than one file, use AI to decide
-			aiChoice, err := askAiForEntryPoint(ctx, client, matches)
-			if err != nil {
-				return nil, err
-			}
-			selectedBaseName = aiChoice
-		}
-
-		return &Project{
-			LanguageConfig:      config,
-			EntryPointFile:      filepath.Join(repoRoot, selectedBaseName),
-			EntryPointBaseName:  selectedBaseName,
-			EntryPointClassName: strings.TrimSuffix(selectedBaseName, filepath.Ext(selectedBaseName)),
-		}, nil
-	}
-	return nil, errors.New("could not detect project language: no files with recognized extensions (*.py, *.java, *.cpp) found")
-}
-
-// buildCommand and main function logic follows...
-// (The rest of the script is largely the same as the previous version, using the detected 'project' object)
 
 func buildCommand(args []string, project *Project) []string {
 	result := make([]string, len(args))
@@ -164,24 +85,91 @@ func buildCommand(args []string, project *Project) []string {
 	return result
 }
 
+// --- Main application logic ---
 func main() {
+	// 1. READ PUSH EVENT TO GET CHANGED FILES (Restored Logic)
+	fmt.Println("Reading GitHub push event...")
+	githubEventPath := os.Getenv("GITHUB_EVENT_PATH")
+	if githubEventPath == "" { log.Fatalf("GITHUB_EVENT_PATH environment variable not set.") }
+	eventPayloadBytes, err := ioutil.ReadFile(githubEventPath)
+	if err != nil { log.Fatalf("Failed to read GITHUB_EVENT_PATH: %v", err) }
+	var pushEvent GitHubPushEvent
+	if err := json.Unmarshal(eventPayloadBytes, &pushEvent); err != nil { log.Fatalf("Failed to unmarshal GitHub push event payload: %v", err) }
+	
+	headCommitSHA := pushEvent.HeadCommit.ID
+	repoOwner := pushEvent.Repository.Owner.Login
+	repoName := pushEvent.Repository.Name
+	if headCommitSHA == "" || repoOwner == "" || repoName == "" { log.Fatalf("Could not extract commit SHA, repo owner, or repo name from event payload.") }
+
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	if githubToken == "" { log.Fatalf("GITHUB_TOKEN environment variable not set.") }
+
+	req, _ := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", repoOwner, repoName, headCommitSHA), nil)
+	req.Header.Set("Authorization", "token "+githubToken)
+	respAPI, err := (&http.Client{}).Do(req)
+	if err != nil { log.Fatalf("Error making GitHub API request: %v", err) }
+	defer respAPI.Body.Close()
+	if respAPI.StatusCode != http.StatusOK { bodyBytes, _ := ioutil.ReadAll(respAPI.Body); log.Fatalf("GitHub API request failed with status %d: %s", respAPI.StatusCode, string(bodyBytes)) }
+	
+	var commitDetails GitHubCommitDetails
+	if err := json.NewDecoder(respAPI.Body).Decode(&commitDetails); err != nil { log.Fatalf("Error unmarshaling GitHub API response: %v", err) }
+
+	// 2. DETERMINE LANGUAGE FROM CHANGED FILES
+	var detectedLangConfig LanguageConfig
+	var relevantFilesChanged []string
+	for _, changedFile := range commitDetails.Files {
+		ext := filepath.Ext(changedFile.Filename)
+		for lang, config := range supportedLanguages {
+			if strings.TrimPrefix(ext, ".") == strings.TrimPrefix(config.GlobPattern, "*.") {
+				detectedLangConfig = config
+				relevantFilesChanged = append(relevantFilesChanged, changedFile.Filename)
+			}
+		}
+	}
+
+	if detectedLangConfig.Language == "" {
+		fmt.Println("No relevant code files (.py, .java, .cpp) changed in this push. Skipping functional tests.")
+		os.Exit(0)
+	}
+	fmt.Printf("Detected changes to %s files: %v\n", detectedLangConfig.Language, relevantFilesChanged)
+
+
+	// 3. FIND THE MAIN ENTRY POINT FOR THE DETECTED LANGUAGE
+	// (This part now runs *after* we know the language from the push)
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" { log.Fatalf("GEMINI_API_KEY environment variable not set.") }
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey)); 
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey));
 	if err != nil { log.Fatalf("Error creating Gemini client: %v", err) }
 	defer client.Close()
 	model := client.GenerativeModel("gemini-1.5-flash")
 
 	repoRoot := ".."
-	project, err := detectProjectLanguage(ctx, model, repoRoot)
-	if err != nil {
-		log.Fatalf("::error::%v", err)
+	globPath := filepath.Join(repoRoot, detectedLangConfig.GlobPattern)
+	allProjectFiles, _ := filepath.Glob(globPath)
+	if len(allProjectFiles) == 0 { log.Fatalf("Detected %s change, but could not find any %s files in the repo.", detectedLangConfig.Language, detectedLangConfig.GlobPattern) }
+	
+	var selectedBaseName string
+	if len(allProjectFiles) == 1 {
+		selectedBaseName = filepath.Base(allProjectFiles[0])
+		fmt.Printf("Found single %s file: using '%s' as the entry point.\n", detectedLangConfig.Language, selectedBaseName)
+	} else {
+		aiChoice, err := askAiForEntryPoint(ctx, model, allProjectFiles)
+		if err != nil { log.Fatalf("::error::%v", err) }
+		selectedBaseName = aiChoice
+	}
+	
+	project := &Project{
+		LanguageConfig:      detectedLangConfig,
+		EntryPointFile:      filepath.Join(repoRoot, selectedBaseName),
+		EntryPointBaseName:  selectedBaseName,
+		EntryPointClassName: strings.TrimSuffix(selectedBaseName, filepath.Ext(selectedBaseName)),
 	}
 
-	// 1. Generate Test Cases
+
+	// 4. GENERATE TEST CASES & RUN THEM
+	// (This logic is now confirmed to be running against the correct, intelligently-detected project entry point)
 	fmt.Println("\nGenerating test cases...")
-	// Abbreviated for clarity - this logic is unchanged.
 	actualHomeworkInstructionsFile := filepath.Join(repoRoot, homeworkInstructionsFile)
 	homeworkInstructions, _ := ioutil.ReadFile(actualHomeworkInstructionsFile)
 	prompt := fmt.Sprintf(testGenPromptTemplate, string(homeworkInstructions))
@@ -191,20 +179,15 @@ func main() {
 	_ = json.Unmarshal([]byte(jsonStr), &testCasesResponse)
 	fmt.Printf("Successfully generated %d test cases.\n", len(testCasesResponse.TestCases))
 
-	// 2. Compile code if necessary
 	if project.CompileCmd != nil {
 		cmdArgs := buildCommand(project.CompileCmd, project)
 		fmt.Printf("\nCompiling student code: %s\n", strings.Join(cmdArgs, " "))
 		cmdBuild := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 		buildOutput, err := cmdBuild.CombinedOutput()
-		if err != nil {
-			log.Fatalf("::error::Failed to compile student code. Error: %v\nCompiler Output:\n%s", err, string(buildOutput))
-		}
+		if err != nil { log.Fatalf("::error::Failed to compile student code. Error: %v\nCompiler Output:\n%s", err, string(buildOutput)) }
 		fmt.Println("Compilation successful.")
 	}
 
-	// 3. Run against each test case
-	// This logic is unchanged.
 	var failedTests int
 	execArgs := buildCommand(project.ExecuteCmd, project)
 	for i, tc := range testCasesResponse.TestCases {
@@ -226,7 +209,6 @@ func main() {
 		}
 	}
 
-	// 4. Final Report
 	fmt.Println("\n--- Functional Test Summary ---")
 	summary := fmt.Sprintf("Passed %d out of %d test cases for the %s project.", len(testCasesResponse.TestCases)-failedTests, len(testCasesResponse.TestCases), project.Language)
 	if failedTests > 0 {
