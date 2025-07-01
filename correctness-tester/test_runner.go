@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/generative-ai-go/genai"
+	"github.comcom/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
 
@@ -59,7 +59,6 @@ func askAiForEntryPoint(ctx context.Context, model *genai.GenerativeModel, files
 func main() {
 	// 1. Get Changed Files from GitHub Push Event
 	fmt.Println("Reading GitHub push event...")
-	// ... (GitHub API logic is unchanged, resulting in `commitDetails.Files`)
 	githubEventPath := os.Getenv("GITHUB_EVENT_PATH")
 	if githubEventPath == "" { log.Fatalf("GITHUB_EVENT_PATH not set.") }
 	eventPayloadBytes, err := ioutil.ReadFile(githubEventPath)
@@ -84,7 +83,6 @@ func main() {
 				if detectedLangConfig.Language == "" {
 					detectedLangConfig = config
 				}
-				// Ensure all pushed files are of the same language
 				if detectedLangConfig.Language != config.Language {
 					log.Fatalf("::error::Mixed language push detected. Please push files of only one language at a time.")
 				}
@@ -121,14 +119,24 @@ func main() {
 		EntryPointClassName: strings.TrimSuffix(entryPointBaseName, "."+detectedLangConfig.FileExtension),
 	}
 
-	// 4. Generate Test Cases (Unchanged)
+	// 4. Generate Test Cases
 	fmt.Println("\nGenerating test cases...")
-	// ... (abbreviated for clarity) ...
+	repoRoot := ".."
+	actualHomeworkInstructionsFile := filepath.Join(repoRoot, homeworkInstructionsFile)
+	homeworkInstructions, err := ioutil.ReadFile(actualHomeworkInstructionsFile)
+	if err != nil { log.Fatalf("Could not read homework instructions: %v", err) }
+	prompt := fmt.Sprintf(testGenPromptTemplate, string(homeworkInstructions))
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+	if err != nil { log.Fatalf("Gemini test case generation failed: %v", err) }
+	if resp == nil || len(resp.Candidates) == 0 { log.Fatalf("Gemini returned no response for test cases.") }
+	jsonPart := resp.Candidates[0].Content.Parts[0].(genai.Text)
+	jsonStr := strings.Trim(string(jsonPart), " \n\t`json")
+	var testCasesResponse TestCasesResponse
+	if err := json.Unmarshal([]byte(jsonStr), &testCasesResponse); err != nil { log.Fatalf("Failed to unmarshal Gemini's JSON response: %v\nRaw response:\n%s", err, jsonStr) }
+	fmt.Printf("Successfully generated %d test cases.\n", len(testCasesResponse.TestCases))
 	
 	// 5. Compile ALL Pushed Source Files Together
 	if project.Compiler != "" {
-		// Build the compile command: compiler + all relevant files + output flags
-		repoRoot := ".."
 		cmdArgs := []string{project.Compiler}
 		for _, file := range relevantCodeFiles {
 			cmdArgs = append(cmdArgs, filepath.Join(repoRoot, file))
@@ -144,13 +152,46 @@ func main() {
 		fmt.Println("Compilation successful.")
 	}
 	
-	// 6. Execute and Test (Unchanged)
-	// ... (The test loop remains the same) ...
+	// 6. Execute and Test ***(FULL SCRIPT RESTORED)***
 	var execCmd []string
 	for _, arg := range project.ExecuteCmd {
 		arg = strings.Replace(arg, "__FILE__", project.EntryPointFile, -1)
 		arg = strings.Replace(arg, "__CLASSNAME__", project.EntryPointClassName, -1)
 		execCmd = append(execCmd, arg)
 	}
-	// ... loop through test cases using 'execCmd' ...
+
+	var failedTests int
+	for i, tc := range testCasesResponse.TestCases {
+		fmt.Printf("\n--- Running Test Case %d: %s ---\n", i+1, tc.Description)
+		cmdRun := exec.Command(execCmd[0], execCmd[1:]...)
+		cmdRun.Stdin = strings.NewReader(tc.Input)
+		
+		// This is the section that uses the 'bytes' package
+		var stdout, stderr bytes.Buffer
+		cmdRun.Stdout = &stdout
+		cmdRun.Stderr = &stderr
+		
+		err := cmdRun.Run()
+		actualOutput := strings.TrimSpace(stdout.String())
+		expectedOutput := strings.TrimSpace(tc.ExpectedOutput)
+		fmt.Printf("Input: '%s'\nExpected Output: '%s'\nActual Output:   '%s'\n", tc.Input, expectedOutput, actualOutput)
+		if err == nil && actualOutput == expectedOutput {
+			fmt.Println("Result: PASSED")
+		} else {
+			fmt.Println("Result: FAILED")
+			if err != nil {
+				fmt.Printf("Execution Error: %v\nStderr: %s\n", err, stderr.String())
+			}
+			failedTests++
+		}
+	}
+
+	// 7. Final Report
+	fmt.Println("\n--- Functional Test Summary ---")
+	summary := fmt.Sprintf("Passed %d out of %d test cases for the %s project.", len(testCasesResponse.TestCases)-failedTests, len(testCasesResponse.TestCases), project.Language)
+	if failedTests > 0 {
+		fmt.Println("::error::" + summary)
+		os.Exit(1)
+	}
+	fmt.Println(summary)
 }
