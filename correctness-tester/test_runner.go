@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.comcom/google/generative-ai-go/genai"
+	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
 
