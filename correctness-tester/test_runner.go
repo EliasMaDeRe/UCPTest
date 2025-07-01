@@ -23,8 +23,16 @@ const (
 	homeworkInstructionsFile = "homework0e3.txt"
 	compiledExecutableName   = "student_executable"
 )
-type TestCase struct { Description string `json:"description"`; Input string `json:"input"`; ExpectedOutput string `json:"expected_output"` }
-type TestCasesResponse struct{ TestCases []TestCase `json:"test_cases"` }
+// *** STRUCTS CORRECTED TO MATCH AI's camelCase JSON OUTPUT ***
+type TestCase struct {
+	ID             int    `json:"id"`
+	Description    string `json:"description"`
+	Input          string `json:"input"`
+	ExpectedOutput string `json:"expectedOutput"`
+}
+type TestCasesResponse struct{
+    TestCases []TestCase `json:"testCases"`
+}
 type LanguageConfig struct { Language string; FileExtension string; Compiler string; ExecuteCmd []string }
 type Project struct { LanguageConfig; EntryPointFile string; EntryPointClassName string }
 type GitHubPushEvent struct { HeadCommit struct { ID string `json:"id"` } `json:"head_commit"`; Repository struct { Name  string `json:"name"`; Owner struct { Login string `json:"login"` } `json:"owner"` } `json:"repository"` }
@@ -136,7 +144,6 @@ func main() {
 		log.Fatalf("::error::Failed to unmarshal Gemini's JSON response for test cases. The model may have returned non-JSON text. Error: %v\nRaw response:\n%s", err, jsonStr)
 	}
 
-	// *** NEW, IMPROVED ERROR HANDLING ***
 	if len(testCasesResponse.TestCases) == 0 {
 		log.Fatalf("::error::Gemini returned 0 test cases. This usually means the homework instructions in '%s' are unclear or empty. Please check the instructions file.\nRaw model response was: %s", homeworkInstructionsFile, jsonStr)
 	}
