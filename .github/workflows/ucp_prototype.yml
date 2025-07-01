@@ -1,41 +1,70 @@
 name: UCP Prototype
-on: 
+on:
   pull_request:
     branches: [ "main" ]
   push:
     branches: [ "main" ]
+
 jobs:
-  correctness-test:
+  qualitative-review:
+    name: Qualitative AI Review
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Dump GitHub Event Payload for Debugging
-        run: |
-          echo "--- GITHUB EVENT PATH CONTENT ---"
-          cat ${{ github.event_path }}
-          echo "--- END GITHUB EVENT PATH CONTENT ---"
-          echo ""
-          echo "--- GITHUB EVENT JSON (for easy parsing) ---"
-          echo "${{ toJson(github.event) }}"
-          echo "--- END GITHUB EVENT JSON ---"
-      - name: Set up script
+
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
           cache-dependency-path: correctness-tester/go.sum
-      - name: Correctness test
-        id: grader
+          
+      - name: Run Qualitative Code Review
         working-directory: correctness-tester
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          go mod tidy
           go run main.go
-      - name: Grade result
-        if: ${{ failure() && steps.grader.outcome == 'failure' }}
+
+  functional-testing:
+    name: Functional Testing with AI Cases
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- SETUP ALL REQUIRED LANGUAGE TOOLCHAINS ---
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up C/C++ build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # --- RUN THE TESTER SCRIPT ---
+      - name: Generate and Run Test Cases
+        working-directory: correctness-tester
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo "Homework grading failed. Please check the 'Correctness test' step for details."
-          exit 1
+          # The Go script will detect the language and use the tools installed above
+          go mod tidy
+          go run test_runner.go
