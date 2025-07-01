@@ -64,6 +64,7 @@ jobs:
         working-directory: correctness-tester
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # The Go script will detect the language and use the tools installed above
           go mod tidy
